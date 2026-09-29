@@ -8,7 +8,20 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# 1. Scanner les documents stratégiques et récents du coffre
+# 1. Détection automatique du meilleur modèle Flash disponible pour votre clé
+model_name = "gemini-2.0-flash"
+try:
+    models_req = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}").json()
+    for m in models_req.get("models", []):
+        if "generateContent" in m.get("supportedGenerationMethods", []) and "flash" in m.get("name", "").lower():
+            model_name = m["name"].replace("models/", "")
+            break
+except Exception as e:
+    print(f"Fallback modèle par défaut : {e}")
+
+print(f"Modèle sélectionné : {model_name}")
+
+# 2. Scanner les documents du coffre
 context_data = ""
 for folder in ["01_Inbox", "02_Strategic_Core", "03_Operations"]:
     files = glob.glob(f"{folder}/**/*.md", recursive=True) + glob.glob(f"{folder}/*.md")
@@ -29,7 +42,7 @@ system_prompt = f"""Tu es le Conseil d'Administration Autonome "Life OS" compos�
 - Coach Bio-Rythme : Sommeil, sport, récupération, énergie vitale.
 - Secrétaire Exécutif : Arbitrage strict des conflits d'agenda et synthèse.
 
-Analyse l'état du système et les documents, résous les conflits d'énergie et de temps, et génère le plan d'action du jour au format Markdown STRICT avec ce frontmatter YAML :
+Génère la décision exécutive et le plan d'action du jour au format Markdown STRICT avec ce frontmatter YAML :
 
 ---
 uuid: "{uuid_str}"
@@ -56,8 +69,8 @@ actors:
 
 user_query = f"Contexte extrait du coffre :\n{context_data if context_data else 'Revue quotidienne des priorités.'}\n\nRends les arbitrages du jour."
 
-# 2. Appel direct à Google Gemini 1.5 Flash
-url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+# 3. Appel à Google Gemini
+url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
 payload = {
     "contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_query}"}]}]
 }
@@ -76,14 +89,13 @@ if resp.status_code == 200:
 else:
     decision_text = f"# Erreur API Gemini : {resp.status_code}\n{resp.text}"
 
-# 3. Écrire la décision dans 04_Executive_Decisions
+# 4. Écrire la décision dans 04_Executive_Decisions
 os.makedirs("04_Executive_Decisions", exist_ok=True)
 out_path = f"04_Executive_Decisions/decision_{now_str}.md"
 with open(out_path, "w", encoding="utf-8") as f:
     f.write(decision_text)
-print(f"Fichier créé avec succès : {out_path}")
 
-# 4. Envoyer le briefing du matin sur Telegram
+# 5. Envoyer le briefing sur Telegram
 summary_lines = [l for l in decision_text.splitlines() if not l.startswith("---") and not l.startswith("uuid:") and not l.startswith("created_at:") and l.strip()][:15]
 summary_text = "\n".join(summary_lines)
 
