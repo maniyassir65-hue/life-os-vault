@@ -8,20 +8,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# 1. Détection automatique du meilleur modèle Flash disponible pour votre clé
-model_name = "gemini-2.0-flash"
-try:
-    models_req = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}").json()
-    for m in models_req.get("models", []):
-        if "generateContent" in m.get("supportedGenerationMethods", []) and "flash" in m.get("name", "").lower():
-            model_name = m["name"].replace("models/", "")
-            break
-except Exception as e:
-    print(f"Fallback modèle par défaut : {e}")
+# Le modèle officiel demandé par Google
+model_name = "gemini-3.8-flash"
 
-print(f"Modèle sélectionné : {model_name}")
-
-# 2. Scanner les documents du coffre
+# 1. Scanner les documents du coffre
 context_data = ""
 for folder in ["01_Inbox", "02_Strategic_Core", "03_Operations"]:
     files = glob.glob(f"{folder}/**/*.md", recursive=True) + glob.glob(f"{folder}/*.md")
@@ -69,7 +59,7 @@ actors:
 
 user_query = f"Contexte extrait du coffre :\n{context_data if context_data else 'Revue quotidienne des priorités.'}\n\nRends les arbitrages du jour."
 
-# 3. Appel à Google Gemini
+# 2. Appel direct avec gemini-3.8-flash
 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
 payload = {
     "contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_query}"}]}]
@@ -89,13 +79,13 @@ if resp.status_code == 200:
 else:
     decision_text = f"# Erreur API Gemini : {resp.status_code}\n{resp.text}"
 
-# 4. Écrire la décision dans 04_Executive_Decisions
+# 3. Écrire la décision dans 04_Executive_Decisions
 os.makedirs("04_Executive_Decisions", exist_ok=True)
 out_path = f"04_Executive_Decisions/decision_{now_str}.md"
 with open(out_path, "w", encoding="utf-8") as f:
     f.write(decision_text)
 
-# 5. Envoyer le briefing sur Telegram
+# 4. Envoyer le briefing sur Telegram
 summary_lines = [l for l in decision_text.splitlines() if not l.startswith("---") and not l.startswith("uuid:") and not l.startswith("created_at:") and l.strip()][:15]
 summary_text = "\n".join(summary_lines)
 
