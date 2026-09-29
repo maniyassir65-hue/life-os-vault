@@ -1,15 +1,13 @@
 import os
 import json
 import glob
+import time
 from datetime import datetime, timezone
 import requests
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-# Le modèle officiel demandé par Google
-model_name = "gemini-3.8-flash"
 
 # 1. Scanner les documents du coffre
 context_data = ""
@@ -32,7 +30,7 @@ system_prompt = f"""Tu es le Conseil d'Administration Autonome "Life OS" compos�
 - Coach Bio-Rythme : Sommeil, sport, récupération, énergie vitale.
 - Secrétaire Exécutif : Arbitrage strict des conflits d'agenda et synthèse.
 
-Génère la décision exécutive et le plan d'action du jour au format Markdown STRICT avec ce frontmatter YAML :
+Rends tes arbitrages pour la journée sous format Markdown STRICT avec ce frontmatter YAML :
 
 ---
 uuid: "{uuid_str}"
@@ -49,7 +47,7 @@ actors:
 # Synthèse Opérationnelle & Décision du Jour
 
 ## Arbitrages du Conseil
-[Décisions fermes et justification d'arbitrage pour la journée]
+[Arbitrages fermes et justifications]
 
 ## Actions Immédiates
 - [ ] Action 1
@@ -58,26 +56,37 @@ actors:
 """
 
 user_query = f"Contexte extrait du coffre :\n{context_data if context_data else 'Revue quotidienne des priorités.'}\n\nRends les arbitrages du jour."
+payload = {"contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_query}"}]}]}
 
-# 2. Appel direct avec gemini-3.8-flash
-url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-payload = {
-    "contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_query}"}]}]
-}
-
-resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"})
+# 2. Appel avec Retry-Policy (Figure 3 de la spécification)
+models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.8-pro"]
 decision_text = ""
 
-if resp.status_code == 200:
-    decision_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    if decision_text.startswith("```markdown"):
-        decision_text = decision_text[len("```markdown"):].strip()
-    if decision_text.startswith("```"):
-        decision_text = decision_text[len("```"):].strip()
-    if decision_text.endswith("```"):
-        decision_text = decision_text[:-3].strip()
-else:
-    decision_text = f"# Erreur API Gemini : {resp.status_code}\n{resp.text}"
+for current_model in models_to_try:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={GEMINI_API_KEY}"
+    for attempt in range(1, 4):
+        print(f"Appel modèle {current_model} (Tentative {attempt}/3)...")
+        resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"})
+        if resp.status_code == 200:
+            decision_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            break
+        elif resp.status_code in [429, 503]:
+            print(f"Surcharge temporaire ({resp.status_code}), attente de 3 secondes...")
+            time.sleep(3)
+        else:
+            break
+    if decision_text:
+        break
+
+if not decision_text:
+    decision_text = f"# Erreur après réessais : {resp.status_code}\n{resp.text}"
+
+if decision_text.startswith("```markdown"):
+    decision_text = decision_text[len("```markdown"):].strip()
+if decision_text.startswith("```"):
+    decision_text = decision_text[len("```"):].strip()
+if decision_text.endswith("```"):
+    decision_text = decision_text[:-3].strip()
 
 # 3. Écrire la décision dans 04_Executive_Decisions
 os.makedirs("04_Executive_Decisions", exist_ok=True)
